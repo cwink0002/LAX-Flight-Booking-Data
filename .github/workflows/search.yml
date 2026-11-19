@@ -1,0 +1,77 @@
+
+name: Flight Search Request
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flight-search-cache
+  cancel-in-progress: false
+
+jobs:
+  search:
+    if: github.event.issue.title == 'FLIGHT_SEARCH'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v4
+
+      - name: Process destination
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import json
+          from datetime import datetime, timezone
+
+          body = os.environ.get("ISSUE_BODY", "")
+          match = re.search(
+              r"^destination=([A-Za-z]{3})\s*$",
+              body,
+              re.MULTILINE
+          )
+
+          if not match:
+              raise ValueError("Invalid destination in issue")
+
+          destination = match.group(1).upper()
+
+          if destination == "LAX":
+              raise ValueError("Destination cannot be LAX")
+
+          os.makedirs("requests", exist_ok=True)
+          filename = f"requests/LAX-{destination}.json"
+
+          if os.path.exists(filename):
+              print("Destination already requested:", destination)
+          else:
+              data = {
+                  "origin": "LAX",
+                  "destination": destination,
+                  "status": "pending",
+                  "requestedAt": datetime.now(timezone.utc).isoformat()
+              }
+
+              with open(filename, "w") as file:
+                  json.dump(data, file, indent=2)
+
+              print("Saved new destination:", destination)
+          PY
+
+      - name: Save to GitHub
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add requests/
+          if ! git diff --cached --quiet; then
+            git commit -m "Save flight search request"
+            git pull --rebase
+            git push
+          fi
